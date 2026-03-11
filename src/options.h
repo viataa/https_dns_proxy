@@ -61,6 +61,9 @@ struct Options {
   // Path to a file containing CA certificates
   const char *ca_info;
 
+  // Fallback DNS servers (comma-separated) when DoH fails
+  const char *fallback_dns;
+
   // Number of logs to be kept by flight recorder
   int flight_recorder_size;
 } __attribute__((aligned(128)));

@@ -28,6 +28,10 @@ struct https_fetch_ctx {
   size_t buflen;
 
   struct https_fetch_ctx *next;
+
+  // ★★★ 新增：保存原始查询数据 ★★★
+  uint8_t *query_data;
+  size_t query_len;
 };
 
 // Holds state on the whole multiplexed CURL machine.

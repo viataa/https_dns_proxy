@@ -19,6 +19,10 @@ enum {
 DOH_MAX_RESPONSE_SIZE = 65535
 };
 
+// Fallback DNS support
+static const char *fallback_dns_servers = NULL;
+static int use_fallback = 0;
+
 // the following macros require to have ctx pointer to https_fetch_ctx structure
 // else: compilation failure will occur
 #define LOG_REQ(level, format, args...) LOG(level, "%04hX: " format, ctx->id, ## args)
@@ -74,6 +78,62 @@ static size_t write_buffer(void *buf, size_t size, size_t nmemb, void *userp) {
   // We always expect to receive valid non-null ASCII but just to be safe...
   ctx->buf[ctx->buflen] = '\0';
   return write_size;
+}
+
+void https_client_set_fallback(const char *dns_servers) {
+    fallback_dns_servers = dns_servers;
+    use_fallback = (dns_servers != NULL && *dns_servers != '\0');
+    if (use_fallback) {
+        ILOG("Fallback DNS enabled: %s", dns_servers);
+    }
+}
+
+static int query_fallback_dns(uint16_t id, const uint8_t *query, size_t query_len,
+        uint8_t *response, size_t *response_len) {
+    if (!use_fallback) { { return -1;
+    }
+    }
+
+    char servers[256];
+    strncpy(servers, fallback_dns_servers, sizeof(servers) - 1);
+    servers[sizeof(servers) - 1] = '\0';
+
+    char *server = strtok(servers, ",");
+    while (server) {
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(53);
+
+        if (inet_pton(AF_INET, server, &addr.sin_addr) == 1) {
+            DLOG("%04hX: Trying fallback DNS %s", id, server);
+
+            int sock = socket(AF_INET, SOCK_DGRAM, 0);
+            if (sock < 0) {
+                server = strtok(NULL, ",");
+                continue;
+            }
+
+            struct timeval tv = {2, 0};
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+            ssize_t sent = sendto(sock, query, query_len, 0,
+                    (struct sockaddr*)&addr, sizeof(addr));
+            if (sent == (ssize_t)query_len) {
+                *response_len = recvfrom(sock, response, 512, 0, NULL, NULL);
+                close(sock);
+
+                if (*response_len > 0) {
+                    DLOG("%04hX: Fallback DNS success from %s", id, server);
+                    return 0;
+                }
+            }
+            close(sock);
+        }
+        server = strtok(NULL, ",");
+    }
+
+    return -1;
 }
 
 static curl_socket_t opensocket_callback(void *clientp, curlsocktype purpose,
@@ -286,6 +346,15 @@ static void https_fetch_ctx_init(https_client_t *client,
   ctx->next = client->fetches;
   client->fetches = ctx;
 
+  // 新增：保存查询数据的副本 ★★★
+  ctx->query_data = malloc(datalen);
+  if (ctx->query_data) {
+      memcpy(ctx->query_data, data, datalen);
+      ctx->query_len = datalen;
+  } else {
+      FLOG_REQ("Failed to allocate query data buffer");
+  }
+
   ASSERT_CURL_EASY_SETOPT(ctx, CURLOPT_RESOLVE, resolv);
 
   https_set_request_version(client, ctx);
@@ -328,7 +397,7 @@ static void https_fetch_ctx_init(https_client_t *client,
   CURLMcode multi_code = curl_multi_add_handle(client->curlm, ctx->curl);
   if (multi_code != CURLM_OK) {
     ELOG_REQ("curl_multi_add_handle error %d: %s", multi_code, curl_multi_strerror(multi_code));
-    if (multi_code == CURLM_ABORTED_BY_CALLBACK) {
+    if (multi_code == CURLE_ABORTED_BY_CALLBACK) {
       WLOG_REQ("Resetting HTTPS client to recover from faulty state!");
       https_client_reset(client);
     } else {
@@ -514,6 +583,7 @@ static void https_fetch_ctx_cleanup(https_client_t *client,
     FLOG_REQ("curl_multi_remove_handle error %d: %s", code, curl_multi_strerror(code));
   }
   int drop_reply = 0;
+  int faulty_response = 0;
   if (curl_result_code < 0) {
     WLOG_REQ("Request was aborted");
     drop_reply = 1;
@@ -521,6 +591,50 @@ static void https_fetch_ctx_cleanup(https_client_t *client,
     ILOG_REQ("Response was faulty, skipping DNS reply");
     drop_reply = 1;
   }
+
+  // ===== 从这里开始添加后备逻辑 =====
+  // Try fallback DNS if DoH failed
+  if (drop_reply && use_fallback && client->opt && client->opt->resolver_url) {
+      DLOG_REQ("DoH failed, trying fallback DNS");
+
+      uint8_t fallback_response[512];
+      size_t fallback_len = 0;
+
+      // 使用保存的查询数据
+      if (ctx->query_data && ctx->query_len > 0) {
+          DLOG_REQ("Using saved query data, len=%zu", ctx->query_len);
+
+          if (query_fallback_dns(ctx->id,
+                      ctx->query_data,
+                      ctx->query_len,
+                      fallback_response, &fallback_len) == 0) {
+
+              DLOG_REQ("Fallback DNS succeeded, using result");
+
+              // 释放原来的 buf（如果有）
+              if (ctx->buf) {
+                  free(ctx->buf);
+                  ctx->buf = NULL;
+              }
+
+              ctx->buf = malloc(fallback_len);
+              if (ctx->buf) {
+                  memcpy(ctx->buf, fallback_response, fallback_len);
+                  ctx->buflen = fallback_len;
+                  drop_reply = 0;  // 取消丢弃标记
+                  faulty_response = 0;
+
+                  DLOG_REQ("Fallback DNS result prepared, len=%zu", fallback_len);
+              }
+          } else {
+              DLOG_REQ("Fallback DNS also failed");
+          }
+      } else {
+          DLOG_REQ("No saved query data available");
+      }
+  }
+  // ===== 结束添加 =====
+
   if (drop_reply) {
     free(ctx->buf);
     ctx->buf = NULL;
@@ -530,6 +644,11 @@ static void https_fetch_ctx_cleanup(https_client_t *client,
   ctx->cb(ctx->cb_data, ctx->buf, ctx->buflen);
   curl_easy_cleanup(ctx->curl);
   free(ctx->buf);
+  if (ctx->query_data) {
+      free(ctx->query_data);
+      ctx->query_data = NULL;
+  }
+
   if (prev) {
     prev->next = ctx->next;
   } else {
@@ -573,7 +692,7 @@ static void sock_cb(struct ev_loop __attribute__((unused)) *loop,
   }
   else {
     FLOG("curl_multi_socket_action error %d: %s", code, curl_multi_strerror(code));
-    if (code == CURLM_ABORTED_BY_CALLBACK) {
+    if (code == CURLE_ABORTED_BY_CALLBACK) {
       WLOG("Resetting HTTPS client to recover from faulty state!");
       https_client_reset(c);
     }

@@ -45,6 +45,7 @@ void options_init(struct Options *opt) {
   opt->conn_loss_time = 15;
   opt->stats_interval = 0;
   opt->ca_info = NULL;
+  opt->fallback_dns = NULL;  // 新增：后备DNS初始化为NULL
   opt->flight_recorder_size = 0;
 }
 
@@ -59,7 +60,7 @@ int parse_int(char * str) {
 
 enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char **argv) {
   int c = 0;
-  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:F:hV")) != -1) {
+  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:hV")) != -1) {
     switch (c) {
     case 'a': // listen_addr
       opt->listen_addr = optarg;
@@ -129,6 +130,9 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       break;
     case 'C': // CA info
       opt->ca_info = optarg;
+      break;
+    case 'B':
+      opt->fallback_dns = optarg;
       break;
     case 'F': // Flight recorder size
       opt->flight_recorder_size = parse_int(optarg);
@@ -227,7 +231,7 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
   printf("Usage: %s [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_limit>]\n", argv[0]);
   printf("        [-b <dns_servers>] [-i <polling_interval>] [-4]\n");
   printf("        [-r <resolver_url>] [-t <proxy_server>] [-S <source_addr>] [-x] [-q] [-C <ca_path>] [-c <dscp_codepoint>]\n");
-  printf("        [-d] [-u <user>] [-g <group>] \n");
+  printf("        [-d] [-u <user>] [-g <group>] [-B <dns_fallback_ip>] \n");
   printf("        [-v]+ [-l <logfile>] [-s <statistic_interval>] [-F <log_limit>] [-V] [-h]\n");
   printf("\n DNS server\n");
   printf("  -a listen_addr         Local IPv4/v6 address to bind to. (Default: %s)\n",
@@ -278,6 +282,7 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
   printf("                         Levels: fatal, stats, error, warning, info, debug\n");
   printf("                         Request issues are logged on warning level.\n");
   printf("  -l logfile             Path to file to log to. (Default: standard output)\n");
+  printf("  -B dns_fallback_ip     Fallback DNS IP. (eg:8.8.8.8,4.4.4.4)\n");
   printf("  -s statistic_interval  Optional statistic printout interval.\n"\
          "                         (Default: %d, Disabled: 0, Min: 1, Max: 3600)\n",
          defaults.stats_interval);

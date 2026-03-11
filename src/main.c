@@ -361,6 +361,12 @@ int main(int argc, char *argv[]) {
 
   struct addrinfo *listen_addrinfo = get_listen_address(opt.listen_addr);
 
+  // Setup fallback DNS if configured
+  if (opt.fallback_dns) {
+      https_client_set_fallback(opt.fallback_dns);
+      ILOG("Fallback DNS enabled: %s", opt.fallback_dns);
+  }
+
   if (listen_addrinfo->ai_family == AF_INET) {
     ((struct sockaddr_in*) listen_addrinfo->ai_addr)->sin_port = htons((uint16_t)opt.listen_port);
   } else if (listen_addrinfo->ai_family == AF_INET6) {
