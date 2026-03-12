@@ -133,9 +133,36 @@ static void dns_server_cb(void *dns_server, uint8_t is_tcp, void *data,
   // gethostbyname() which can cause a DNS loop due to the nameserver listed
   // in resolv.conf being or depending on https_dns_proxy itself.
   if(app->using_dns_poller && (app->resolv == NULL || app->resolv->data == NULL)) {
-    WLOG("%04hX: Query received before bootstrapping is completed, discarding.", tx_id);
-    free(dns_req);
-    return;
+      // 修改：如果 bootstrap 未完成，但有后备 DNS，直接使用
+      if (https_client_fallback_enabled()) {
+          DLOG("%04hX: Bootstrap not ready, using fallback DNS directly", tx_id);
+
+          uint8_t fallback_response[512];
+          size_t fallback_len = 0;
+
+          if (https_client_fallback_query(tx_id, (const uint8_t*)dns_req, dns_req_len,
+                      fallback_response, &fallback_len) == 0) {
+              DLOG("%04hX: Fallback DNS succeeded", tx_id);
+
+              if (is_tcp) {
+                  dns_server_tcp_respond((dns_server_tcp_t *)dns_server,
+                          tmp_remote_addr,
+                          (char*)fallback_response, fallback_len);
+              } else {
+                  dns_server_respond((dns_server_t *)dns_server,
+                          tmp_remote_addr,
+                          dns_req, dns_req_len,
+                          (char*)fallback_response, fallback_len);
+              }
+
+              free(dns_req);
+              return;
+          }               DLOG("%04hX: Fallback DNS also failed", tx_id);
+
+      }
+      WLOG("%04hX: Query received before bootstrapping is completed, discarding.", tx_id);
+      free(dns_req);
+      return;
   }
 
   request_t *req = (request_t *)calloc(1, sizeof(request_t));

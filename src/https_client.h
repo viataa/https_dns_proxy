@@ -65,4 +65,9 @@ void https_client_reset(https_client_t *c);
 
 void https_client_cleanup(https_client_t *c);
 
+// 在 https_client.h 末尾添加
+int https_client_fallback_query(uint16_t id, const uint8_t *query, size_t query_len,
+                                uint8_t *response, size_t *response_len);
+int https_client_fallback_enabled(void);
+
 #endif // _HTTPS_CLIENT_H_

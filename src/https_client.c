@@ -840,3 +840,17 @@ void https_client_cleanup(https_client_t *c) {
   curl_multi_cleanup(c->curlm);
   ev_timer_stop(c->loop, &c->reset_timer);
 }
+
+// 在 https_client.c 中添加
+int https_client_fallback_enabled(void) {
+    return use_fallback && fallback_dns_servers != NULL;
+}
+
+int https_client_fallback_query(uint16_t id, const uint8_t *query, size_t query_len,
+                                uint8_t *response, size_t *response_len) {
+    if (!use_fallback || !fallback_dns_servers) {
+        return -1;
+    }
+    return query_fallback_dns(id, query, query_len, response, response_len);
+}
+
