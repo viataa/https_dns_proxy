@@ -345,13 +345,16 @@ int main(int argc, char *argv[]) {
       abort();  // must not happen
   }
 
-  logging_init(opt.logfd, opt.loglevel, (uint32_t)opt.flight_recorder_size);
+  logging_init(opt.logfd, opt.loglevel, (uint32_t)opt.flight_recorder_size, opt.use_syslog);
 
   ILOG("Version: %s", sw_version());
   ILOG("Built: " __DATE__ " " __TIME__);
   ILOG("System ev library: %d.%d", ev_version_major(), ev_version_minor());
   ILOG("System c-ares library: %s", ares_version(NULL));
   ILOG("System curl library: %s", curl_version());
+  if (opt.use_syslog) {
+    ILOG("Logging to syslog enabled");
+  }
 
   // Note: curl intentionally uses uninitialized stack variables and similar
   // tricks to increase it's entropy pool. This confuses valgrind and leaks

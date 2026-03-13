@@ -15,6 +15,9 @@ struct Options {
   int logfd;
   int loglevel;
 
+  // Syslog option
+  int use_syslog;
+
   // Whether to fork into background.
   int daemonize;
 

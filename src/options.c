@@ -26,7 +26,8 @@ void options_init(struct Options *opt) {
   opt->tcp_client_limit = 20;
   opt->logfile = "-";
   opt->logfd = STDOUT_FILENO;
-  opt->loglevel = LOG_ERROR;
+  opt->loglevel = DOH_LOG_ERROR;
+  opt->use_syslog = 0;  // 默认不使用syslog
   opt->daemonize = 0;
   opt->dscp = 0;
   opt->user = NULL;
@@ -60,7 +61,7 @@ int parse_int(char * str) {
 
 enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char **argv) {
   int c = 0;
-  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:hV")) != -1) {
+  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:yhV")) != -1) {
     switch (c) {
     case 'a': // listen_addr
       opt->listen_addr = optarg;
@@ -137,6 +138,9 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
     case 'F': // Flight recorder size
       opt->flight_recorder_size = parse_int(optarg);
       break;
+    case 'y':
+      opt->use_syslog = 1;
+      break;
     case 'h':
       return OPR_HELP;
     case 'V': // version
@@ -176,7 +180,8 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
            "----------------------------\n");
     sleep(1);
   }
-  if (opt->logfile != NULL && strcmp(opt->logfile, "-") != 0) {
+  // 如果使用syslog，就不打开日志文件
+  if (!opt->use_syslog && opt->logfile != NULL && strcmp(opt->logfile, "-") != 0) {
     opt->logfd = open(opt->logfile,
                       O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC,
                       S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -278,10 +283,12 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
   printf("  -u user                Optional user to drop to if launched as root.\n");
   printf("  -g group               Optional group to drop to if launched as root.\n");
   printf("\n Logging\n");
+  printf("  -y                     Use syslog for logging instead of file/stdout.\n");
   printf("  -v                     Increase logging verbosity. (Default: error)\n");
   printf("                         Levels: fatal, stats, error, warning, info, debug\n");
   printf("                         Request issues are logged on warning level.\n");
   printf("  -l logfile             Path to file to log to. (Default: standard output)\n");
+  printf("                         Ignored when -y is used.\n");
   printf("  -B dns_fallback_ip     Fallback DNS IP. (eg:8.8.8.8,4.4.4.4)\n");
   printf("  -s statistic_interval  Optional statistic printout interval.\n"\
          "                         (Default: %d, Disabled: 0, Min: 1, Max: 3600)\n",
@@ -296,7 +303,8 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
 }
 
 void options_cleanup(struct Options *opt) {
-  if (opt->logfd != STDOUT_FILENO && opt->logfd > 0) {
+  // 如果使用了syslog，就不关闭日志文件
+  if (!opt->use_syslog && opt->logfd != STDOUT_FILENO && opt->logfd > 0) {
     close(opt->logfd);
   }
 }

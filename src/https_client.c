@@ -250,7 +250,7 @@ int https_curl_debug(CURL __attribute__((unused)) * handle, curl_infotype type,
     // not dumping DNS packets because of privacy
     case CURLINFO_DATA_OUT:
     case CURLINFO_DATA_IN:
-      https_log_data(LOG_DEBUG, ctx, (type == CURLINFO_DATA_IN ? "< " : "> "), data, size);
+      https_log_data(DOH_LOG_DEBUG, ctx, (type == CURLINFO_DATA_IN ? "< " : "> "), data, size);
       return 0;
     // uninformative
     case CURLINFO_SSL_DATA_OUT:
@@ -263,7 +263,7 @@ int https_curl_debug(CURL __attribute__((unused)) * handle, curl_infotype type,
 
   // for extra debugging purpose
   // if (type != CURLINFO_TEXT) {
-  //   https_log_data(LOG_DEBUG, ctx, "", data, size);
+  //   https_log_data(DOH_LOG_DEBUG, ctx, "", data, size);
   // }
 
   // process lines one-by one
@@ -274,7 +274,7 @@ int https_curl_debug(CURL __attribute__((unused)) * handle, curl_infotype type,
       // skip empty string and curl info Expire
       if (start != NULL && (pos - start) > 0 &&
           strncmp(start, "Expire", sizeof("Expire") - 1) != 0) {
-        // https_log_data(LOG_DEBUG, ctx, "", start, pos - start);
+        // https_log_data(DOH_LOG_DEBUG, ctx, "", start, pos - start);
         DLOG_REQ("%s%.*s", prefix, pos - start, start);
         start = NULL;
       }
@@ -464,7 +464,7 @@ static int https_fetch_ctx_process_response(https_client_t *client,
     } else {
       WLOG_REQ("curl response code: %d, content length: %zu", long_resp, ctx->buflen);
       if (ctx->buflen > 0) {
-        https_log_data(LOG_WARNING, ctx, "", ctx->buf, ctx->buflen);
+        https_log_data(DOH_LOG_WARNING, ctx, "", ctx->buf, ctx->buflen);
       }
     }
   }

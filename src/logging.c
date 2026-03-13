@@ -3,24 +3,41 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/time.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #include "logging.h"
 #include "ring_buffer.h"
 
+#define LOG_IDENT "https_dns_proxy"
+
 // logs of this severity or higher are flushed immediately after write
-#define LOG_FLUSH_LEVEL LOG_WARNING
+#define LOG_FLUSH_LEVEL DOH_LOG_WARNING
 enum {
 LOG_LINE_SIZE = 2048  // Log line should be at least 100
 };
 
+static int use_syslog = 0;
 static FILE *logfile = NULL;                         // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-static int loglevel = LOG_ERROR;                     // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static int loglevel = DOH_LOG_ERROR;                     // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static ev_timer logging_timer;                       // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static ev_signal sigusr2;                            // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static ev_async flight_recorder_async;               // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static struct ev_loop *logging_loop = NULL;          // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 static struct ring_buffer * flight_recorder = NULL;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
+// 将syslog优先级映射到本地severity
+static inline int severity_to_syslog(int severity) {
+    switch (severity) {
+        case DOH_LOG_DEBUG:   return LOG_DEBUG;
+        case DOH_LOG_INFO:    return LOG_INFO;
+        case DOH_LOG_WARNING: return LOG_WARNING;
+        case DOH_LOG_ERROR:   return EV_ERROR;
+        case DOH_LOG_STATS:   return LOG_INFO;  // 统计信息作为info
+        case DOH_LOG_FATAL:   return LOG_CRIT;
+        default:          return LOG_INFO;
+    }
+}
 
 static const char * const SeverityStr[] = {
   "[D]",
@@ -85,16 +102,28 @@ void logging_events_cleanup(struct ev_loop *loop) {
   ev_async_stop(loop, &flight_recorder_async);
 }
 
-void logging_init(int fd, int level, uint32_t flight_recorder_size) {
-  if (logfile) {
-    (void)fclose(logfile);
-    logfile = NULL;
+void logging_init(int fd, int level, uint32_t flight_recorder_size, int syslog_flag) {
+  use_syslog = syslog_flag;
+  if (use_syslog) {
+    // 打开syslog连接
+    openlog(LOG_IDENT, LOG_PID | LOG_DEBUG, LOG_DEBUG);
+    // 如果使用了syslog，关闭可能打开的文件描述符
+    if (logfile) {
+      (void)fclose(logfile);
+      logfile = NULL;
+    }
+  } else {
+    if (logfile) {
+      (void)fclose(logfile);
+      logfile = NULL;
+    }
+    logfile = fdopen(fd, "a");
+    if (logfile == NULL) {
+      // fdopen failed, can't log but we can still continue
+      return;
+    }
   }
-  logfile = fdopen(fd, "a");
-  if (logfile == NULL) {
-    // fdopen failed, can't log but we can still continue
-    return;
-  }
+
   loglevel = level;
 
   ring_buffer_init(&flight_recorder, flight_recorder_size);
@@ -106,14 +135,18 @@ void logging_cleanup(void) {
     flight_recorder = NULL;
   }
 
-  if (logfile) {
+  if (use_syslog) {
+    // 关闭syslog连接
+    closelog();
+  } else if (logfile) {
     (void)fclose(logfile);
   }
   logfile = NULL;
+  use_syslog = 0;
 }
 
 int logging_debug_enabled(void) {
-  return loglevel <= LOG_DEBUG || flight_recorder;
+  return loglevel <= DOH_LOG_DEBUG || flight_recorder;
 }
 
 // NOLINTNEXTLINE(misc-no-recursion) because of severity check
@@ -121,10 +154,12 @@ void _log(const char *file, int line, int severity, const char *fmt, ...) {
   if (severity < loglevel && !flight_recorder) {
     return;
   }
-  if (severity < 0 || severity >= LOG_MAX) {
+  if (severity < 0 || severity >= DOH_LOG_MAX) {
     FLOG("Unknown log severity: %d", severity);
   }
-  if (!logfile) {
+
+  // 如果没有使用syslog且logfile为空，尝试使用stdout
+  if (!use_syslog && !logfile) {
     logfile = fdopen(STDOUT_FILENO, "w");
     if (!logfile) {
       // Can't even log to stdout, abort
@@ -165,12 +200,22 @@ void _log(const char *file, int line, int severity, const char *fmt, ...) {
   if (severity < loglevel) {
     return;
   }
-  (void)fprintf(logfile, "%s\n", buff);
 
-  if (severity >= LOG_FLUSH_LEVEL) {
+  // 根据配置输出日志
+  if (use_syslog) {
+    // 输出到syslog（不带时间戳和文件名，因为syslog会自动添加）
+    va_start(args, fmt);
+    vsyslog(severity_to_syslog(severity), fmt, args);
+    va_end(args);
+  } else {
+    (void)fprintf(logfile, "%s\n", buff);
+  }
+
+  if (!use_syslog && severity >= LOG_FLUSH_LEVEL) {
     (void)fflush(logfile);
   }
-  if (severity == LOG_FATAL) {
+
+  if (severity == DOH_LOG_FATAL) {
     if (flight_recorder) {
       ring_buffer_dump(flight_recorder, logfile);
     }

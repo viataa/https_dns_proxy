@@ -41,6 +41,23 @@ only makes sense if you trust your DoH provider.
 * Designed to sit in front of dnsmasq or similar caching resolver for
   transparent use.
 
+## Recent Improvements
+
+### Fallback DNS Support (March 2026)
+
+Added comprehensive fallback DNS support to ensure DNS resolution continues even when DoH services are unavailable:
+
+* **Bootstrap Fallback**: When the DoH server cannot be resolved during bootstrap, queries automatically fall back to traditional DNS servers specified by `-B` option. This prevents DNS outages during bootstrap failures.
+* **Response Fallback**: If a DoH request returns a faulty response (timeout, connection loss, or invalid content type), the system automatically retries using traditional DNS servers.
+* **Command Line Option**: Use `-B <dns_servers>` to specify comma-separated fallback DNS servers (e.g., `-B 8.8.8.8,4.4.4.4`).
+
+### Syslog Logging Support (March 2026)
+
+Added syslog logging capability for better integration with system logging facilities:
+
+* **Syslog Output**: Use `-y` command line option to enable logging to syslog instead of file/stdout. When enabled, logs are sent to syslog with appropriate priorities (LOG_DEBUG, LOG_INFO, LOG_WARNING, LOG_ERR, LOG_CRIT).
+* **Seamless Integration**: Works alongside existing logging options - when `-y` is used, the `-l` logfile option is automatically ignored.
+
 ## Build
 
 Depends on `c-ares (>=1.11.0)`, `libcurl (>=7.66.0)`, `libev (>=4.25)`.
@@ -176,6 +193,7 @@ Usage: ./https_dns_proxy [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_l
                          of DNS servers to resolve resolver host (e.g. dns.google).
                          When specifying a port for IPv6, enclose the address in [].
                          (Default: 8.8.8.8,1.1.1.1,8.8.4.4,1.0.0.1,145.100.185.15,145.100.185.16,185.49.141.37)
+  -B dns_fallback_ip     Fallback DNS IP when DoH fails. (eg:8.8.8.8,4.4.4.4)
   -i polling_interval    Optional polling interval of DNS servers.
                          (Default: 120, Min: 5, Max: 3600)
   -4                     Force IPv4 hostnames for DNS resolvers non IPv6 networks.
@@ -207,10 +225,12 @@ Usage: ./https_dns_proxy [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_l
   -g group               Optional group to drop to if launched as root.
 
  Logging
+  -y                     Use syslog for logging instead of file/stdout.
   -v                     Increase logging verbosity. (Default: error)
                          Levels: fatal, stats, error, warning, info, debug
                          Request issues are logged on warning level.
   -l logfile             Path to file to log to. (Default: standard output)
+                         Ignored when -y is used.
   -s statistic_interval  Optional statistic printout interval.
                          (Default: 0, Disabled: 0, Min: 1, Max: 3600)
   -F log_limit           Flight recorder: storing desired amount of logs from all levels
