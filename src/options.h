@@ -10,6 +10,9 @@ struct Options {
 
   int tcp_client_limit;
 
+  // 配置文件路径
+  const char *config_file;
+
   // Logfile.
   const char *logfile;
   int logfd;

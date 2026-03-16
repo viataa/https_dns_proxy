@@ -24,6 +24,7 @@ void options_init(struct Options *opt) {
   opt->listen_addr = "127.0.0.1";
   opt->listen_port = 5053;
   opt->tcp_client_limit = 20;
+  opt->config_file = NULL; // 配置文件
   opt->logfile = "-";
   opt->logfd = STDOUT_FILENO;
   opt->loglevel = DOH_LOG_ERROR;
@@ -61,7 +62,7 @@ int parse_int(char * str) {
 
 enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char **argv) {
   int c = 0;
-  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:yhV")) != -1) {
+  while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:f:yhV")) != -1) {
     switch (c) {
     case 'a': // listen_addr
       opt->listen_addr = optarg;
@@ -140,6 +141,9 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       break;
     case 'y':
       opt->use_syslog = 1;
+      break;
+    case 'f':
+      opt->config_file = optarg;
       break;
     case 'h':
       return OPR_HELP;
@@ -237,7 +241,7 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
   printf("        [-b <dns_servers>] [-i <polling_interval>] [-4]\n");
   printf("        [-r <resolver_url>] [-t <proxy_server>] [-S <source_addr>] [-x] [-q] [-C <ca_path>] [-c <dscp_codepoint>]\n");
   printf("        [-d] [-u <user>] [-g <group>] [-B <dns_fallback_ip>] \n");
-  printf("        [-v]+ [-l <logfile>] [-s <statistic_interval>] [-F <log_limit>] [-V] [-h]\n");
+  printf("        [-v]+ [-l <logfile>] [-s <statistic_interval>] [-F <log_limit>] [-f <config_file>] [-V] [-h]\n");
   printf("\n DNS server\n");
   printf("  -a listen_addr         Local IPv4/v6 address to bind to. (Default: %s)\n",
          defaults.listen_addr);
@@ -297,6 +301,7 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
          "                         in memory and dumping them on fatal error or on SIGUSR2 signal.\n"
          "                         (Default: %u, Disabled: 0, Min: 100, Max: 100000)\n",
          defaults.flight_recorder_size);
+  printf("-f config_file         Load configuration from file (command line arguments override)\n");
   printf("  -V                     Print versions and exit.\n");
   printf("  -h                     Print help and exit.\n");
   options_cleanup(&defaults);

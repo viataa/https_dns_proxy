@@ -40,8 +40,52 @@ only makes sense if you trust your DoH provider.
   embedded systems.
 * Designed to sit in front of dnsmasq or similar caching resolver for
   transparent use.
+* Configuration file support - Manage complex options without long command lines.
 
 ## Recent Improvements
+
+### Configuration File Support (March 2026)
+
+Added comprehensive configuration file support to simplify management of complex options:
+
+- Config File Loading: Use -f <config_file> to load all settings from a configuration file.
+- Key=Value Format: Simple key = value syntax with support for comments and whitespace.
+- Empty Values: Optional parameters like proxy and source_addr can be set to empty values.
+- Priority Order: Command line arguments > Configuration file > Default values.
+- Example Config: See /etc/https_dns_proxy.conf.example for a complete configuration template.
+
+Example configuration file:
+
+```text
+# /etc/https_dns_proxy.conf
+listen_addr = 127.0.0.1
+listen_port = 5053
+tcp_client_limit = 50
+daemonize = yes
+user = nobody
+group = nogroup
+
+bootstrap_dns = 8.8.8.8,1.1.1.1,9.9.9.9
+fallback_dns = 8.8.8.8,4.4.4.4
+polling_interval = 300
+ipv4_only = no
+
+resolver_url = https://dns.google/dns-query
+http_version = 2
+max_idle_time = 300
+conn_loss_time = 30
+
+dscp = 0
+proxy =                    # empty means no proxy
+source_addr =              # empty means system default
+ca_info = /etc/ssl/certs/ca-certificates.crt
+
+loglevel = info
+use_syslog = no
+logfile = /var/log/https_dns_proxy.log
+stats_interval = 60
+flight_recorder = 1000
+```
 
 ### Fallback DNS Support (March 2026)
 
@@ -68,17 +112,20 @@ On Redhat-derived systems those are c-ares-devel, libcurl-devel and libev-devel.
 On systems with systemd it is recommended to have libsystemd development package installed.
 
 On MacOS, you may run into issues with curl headers. Others have had success when first installing curl with brew.
+
 ```
 brew install curl --with-openssl --with-c-ares --with-libssh2 --with-nghttp2 --with-gssapi --with-libmetalink
 brew link curl --force
 ```
 
 On Ubuntu
+
 ```
 apt-get install cmake libc-ares-dev libcurl4-openssl-dev libev-dev libsystemd-dev build-essential
 ```
 
 If all pre-requisites are met, you should be able to build with:
+
 ```
 $ cmake .
 $ make
@@ -89,15 +136,18 @@ $ make
 * If system libcurl supports it by default nothing else has to be done
 
 * If a custom build of libcurl supports HTTP/3 which is installed in a different location, that can be set when running cmake:
+  
   ```
   $ cmake -D CUSTOM_LIBCURL_INSTALL_PATH=/absolute/path/to/custom/libcurl/install .
   ```
 
+```
 * Just to test HTTP/3 support for development purpose, simply run the following command and wait for a long time:
-  ```
-  $ ./development_build_with_http3.sh
-  ```
+```
 
+  $ ./development_build_with_http3.sh
+
+```
 ## INSTALL
 
 ### Install built program
@@ -108,38 +158,43 @@ Like: Raspberry Pi OS / Raspbian, Debian, Ubuntu, etc.
 To install the program binary, systemd service and munin plugin (if munin is pre-installed),
 simply execute the following after build:
 ```
-$ sudo make install
-```
 
+$ sudo make install
+
+```
 To activate munin plugin, restart munin services:
 ```
-$ sudo systemctl restart munin munin-node
-```
 
+$ sudo systemctl restart munin munin-node
+
+```
 To overwrite default service options use:
 ```
+
 $ sudo systemctl edit https_dns_proxy.service
+
 ```
 And re-define ExecStart with desired options:
 ```
+
 [Service]
 ExecStart=
 ExecStart=/usr/local/bin/https_dns_proxy \
   -u nobody -g nogroup -r https://doh.opendns.com/dns-query
-```
 
+```
 ### OpenWRT package install
 
 There is a package in the [OpenWRT packages](https://github.com/openwrt/packages) repository as well.
 You can install as follows:
-
 ```
+
 root@OpenWrt:~# opkg update
 root@OpenWrt:~# opkg install https-dns-proxy
 root@OpenWrt:~# /etc/init.d/https-dns-proxy enable
 root@OpenWrt:~# /etc/init.d/https-dns-proxy start
-```
 
+```
 OpenWrt's init script automatically updates the `dnsmasq` config to include only DoH servers on its start and restores old settings on stop. Additional information on OpenWrt-specific configuration is available at the [README](https://github.com/openwrt/packages/blob/master/net/https-dns-proxy/files/README.md).
 
 If you are using any other resolver on your router you will need to manually replace any previously used servers with entries like:
@@ -154,28 +209,29 @@ There's also a WebUI package available for OpenWrt (`luci-app-https-dns-proxy`) 
 
 There is also an externally maintained [AUR package](https://aur.archlinux.org/packages/https-dns-proxy-git/) for latest git version. You can install as follows:
 ```
-user@arch:~# yay -S https-dns-proxy-git
-```
 
+user@arch:~# yay -S https-dns-proxy-git
+
+```
 ### Docker install
 
 There is also an externally maintained [Docker image](https://hub.docker.com/r/bwmoran/https-dns-proxy) for latest git version. Documentation, Dockerfile, and entrypoint script can be viewed on [GitHub](https://github.com/moranbw/https-dns-proxy-docker).  An example run:
-
 ```
-### points towards AdGuard DNS, only use IPv4, increase logging ###
+
+### points towards AdGuard DNS, only use IPv4, increase logging
 
 docker run --name "https-dns-proxy" -p 5053:5053/udp  \
   -e DNS_SERVERS="94.140.14.14,94.140.15.15" \
   -e RESOLVER_URL="https://dns.adguard.com/dns-query" \
   -d bwmoran/https-dns-proxy \
   -4 -vvv
-```
 
+```
 ## Usage
 
 Just run it as a daemon and point traffic at it. Commandline flags are:
-
 ```
+
 Usage: ./https_dns_proxy [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_limit>]
         [-b <dns_servers>] [-i <polling_interval>] [-4]
         [-r <resolver_url>] [-t <proxy_server>] [-S <source_addr>] [-x] [-q] [-C <ca_path>] [-c <dscp_codepoint>]
@@ -238,15 +294,15 @@ Usage: ./https_dns_proxy [-a <listen_addr>] [-p <listen_port>] [-T <tcp_client_l
                          (Default: 0, Disabled: 0, Min: 100, Max: 100000)
   -V                     Print versions and exit.
   -h                     Print help and exit.
-```
 
+```
 ## Testing
 
 Functional tests can be executed using [Robot Framework](https://robotframework.org/).
 
 dig and valgrind commands are expected to be available.
-
 ```
+
 pip3 install robotframework
 python3 -m robot.run tests/robot/functional_tests.robot
 ```

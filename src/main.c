@@ -13,6 +13,7 @@
 #include <systemd/sd-daemon.h>
 #endif
 
+#include "config.h"
 #include "dns_poller.h"
 #include "dns_server.h"
 #include "dns_server_tcp.h"
@@ -309,7 +310,40 @@ static const char * sw_version(void) {
 
 int main(int argc, char *argv[]) {
   struct Options opt;
-  options_init(&opt);
+  options_init(&opt); // 设置系统默认值
+
+  // 先扫描 -f 参数，加载配置文件
+  {
+    // 先解析命令行参数（只为了获取配置文件路径）
+    int orig_optind = optind; // 保留以备重置用
+    // 先扫描 -f 参数
+    int c = 0;
+    char *config_file = NULL;
+    while ((c = getopt(argc, argv, "+f:")) != -1) {
+        if (c == 'f') {
+            config_file = optarg;
+            break;
+        }
+    }
+    // 重置getopt状态
+    optind = orig_optind;
+
+    // 如果指定了配置文件，先加载
+    if (config_file) {
+        enum ConfigParseResult result = config_load(config_file, &opt);
+        if (result == CPR_FILE_NOT_FOUND) {
+            fprintf(stderr, "Config file '%s' not found\n", config_file);
+            exit(1);
+        } else if (result == OPR_PARSING_ERROR) {
+            fprintf(stderr, "Error parsing config file '%s'\n", config_file);
+            exit(1);
+        } else if (result == OPR_SUCCESS) {
+            printf("Loaded configuration from '%s'\n", config_file);
+        }
+    }
+  }
+
+  // 解析所有命令行参数（覆盖配置文件和默认值）
   switch (options_parse_args(&opt, argc, argv)) {
     case OPR_SUCCESS:
       break;
