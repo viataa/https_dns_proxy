@@ -158,7 +158,8 @@ static void dns_server_cb(void *dns_server, uint8_t is_tcp, void *data,
 
               free(dns_req);
               return;
-          }               DLOG("%04hX: Fallback DNS also failed", tx_id);
+          }
+          DLOG("%04hX: Fallback DNS also failed", tx_id);
 
       }
       WLOG("%04hX: Query received before bootstrapping is completed, discarding.", tx_id);

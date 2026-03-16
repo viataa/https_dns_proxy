@@ -1,7 +1,10 @@
+#include <ares.h>
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <ev.h>
 #include <math.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,6 +12,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "dns_server.h"
 #include "https_client.h"
 #include "logging.h"
 #include "options.h"
@@ -53,6 +57,242 @@ static int use_fallback = 0;
   if ((var_name) == NULL) { \
     FLOG("Unexpected NULL pointer for " #var_name "(" #type ")"); \
   }
+
+typedef struct {
+    int block_private;   // RFC1918 + IPv6 ULA(fc00::/7) 过滤私有地址（通常只在内网可路由，公网不可达）
+    int block_cgnat;     // 100.64.0.0/10 过滤 CGNAT 地址段（运营商级 NAT 内部用地址）
+    int block_testnet;   // 192.0.2/24, 198.51.100/24, 203.0.113/24, 2001:db8::/32 过滤文档/示例用地址（专门留给教程、RFC 文档举例，不应该出现在真实 DNS 解析结果里）
+} ip_filter_cfg_t;
+
+static int ipv4_in_cidr_u32(uint32_t ip, uint32_t net, uint32_t mask) {
+    return (ip & mask) == (net & mask);
+}
+
+/* 返回1=应过滤(无效/不接受), 0=接受 */
+static int should_filter_dns_ip(const char *s, const ip_filter_cfg_t *cfg) {
+    if (!s || !*s) {
+        DLOG("IP validation: NULL or empty string -> FILTER");
+        return 1;
+    }
+
+    struct in_addr a4;
+    struct in6_addr a6;
+    char reason[128] = "";
+
+    /* IPv4 */
+    if (inet_pton(AF_INET, s, &a4) == 1) {
+        uint32_t ip = ntohl(a4.s_addr);
+        uint8_t a = (ip >> 24) & 0xFF;
+        uint8_t b = (ip >> 16) & 0xFF;
+        uint8_t c = (ip >> 8) & 0xFF;
+        uint8_t d = ip & 0xFF;
+
+        /* 必过滤：unspecified/loopback/linklocal/multicast/broadcast/reserved */
+        if (ipv4_in_cidr_u32(ip, 0x00000000u, 0xFF000000u)) {
+            snprintf(reason, sizeof(reason), "0.0.0.0/8 (unspecified)");
+            goto filter;
+        }
+        if (ipv4_in_cidr_u32(ip, 0x7F000000u, 0xFF000000u)) {
+            snprintf(reason, sizeof(reason), "127.0.0.0/8 (loopback)");
+            goto filter;
+        }
+        if (ipv4_in_cidr_u32(ip, 0xA9FE0000u, 0xFFFF0000u)) {
+            snprintf(reason, sizeof(reason), "169.254.0.0/16 (link-local)");
+            goto filter;
+        }
+        if (ipv4_in_cidr_u32(ip, 0xE0000000u, 0xF0000000u)) {
+            snprintf(reason, sizeof(reason), "224.0.0.0/4 (multicast)");
+            goto filter;
+        }
+        if (ip == 0xFFFFFFFFu) {
+            snprintf(reason, sizeof(reason), "255.255.255.255 (broadcast)");
+            goto filter;
+        }
+        if (ipv4_in_cidr_u32(ip, 0xF0000000u, 0xF0000000u)) {
+            snprintf(reason, sizeof(reason), "240.0.0.0/4 (reserved)");
+            goto filter;
+        }
+
+        if (cfg && cfg->block_private) {
+            if (ipv4_in_cidr_u32(ip, 0x0A000000u, 0xFF000000u)) {
+                snprintf(reason, sizeof(reason), "10.0.0.0/8 (private)");
+                goto filter;
+            }
+            if (ipv4_in_cidr_u32(ip, 0xAC100000u, 0xFFF00000u)) {
+                snprintf(reason, sizeof(reason), "172.16.0.0/12 (private)");
+                goto filter;
+            }
+            if (ipv4_in_cidr_u32(ip, 0xC0A80000u, 0xFFFF0000u)) {
+                snprintf(reason, sizeof(reason), "192.168.0.0/16 (private)");
+                goto filter;
+            }
+        }
+
+        if (cfg && cfg->block_cgnat) {
+            if (ipv4_in_cidr_u32(ip, 0x64400000u, 0xFFC00000u)) {
+                snprintf(reason, sizeof(reason), "100.64.0.0/10 (CGNAT)");
+                goto filter;
+            }
+        }
+
+        if (cfg && cfg->block_testnet) {
+            if (ipv4_in_cidr_u32(ip, 0xC0000200u, 0xFFFFFF00u)) {
+                snprintf(reason, sizeof(reason), "192.0.2.0/24 (TEST-NET-1)");
+                goto filter;
+            }
+            if (ipv4_in_cidr_u32(ip, 0xC6336400u, 0xFFFFFF00u)) {
+                snprintf(reason, sizeof(reason), "198.51.100.0/24 (TEST-NET-2)");
+                goto filter;
+            }
+            if (ipv4_in_cidr_u32(ip, 0xCB007100u, 0xFFFFFF00u)) {
+                snprintf(reason, sizeof(reason), "203.0.113.0/24 (TEST-NET-3)");
+                goto filter;
+            }
+        }
+
+        DLOG("IP validation: %u.%u.%u.%u -> ALLOW (public/routable)", a, b, c, d);
+        return 0;
+
+    filter:
+        DLOG("IP validation: %u.%u.%u.%u -> FILTER (%s)", a, b, c, d, reason);
+        return 1;
+    }
+
+    /* IPv6 */
+    if (inet_pton(AF_INET6, s, &a6) == 1) {
+        char ip_str[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &a6, ip_str, sizeof(ip_str));
+
+        /* 必过滤：unspecified/loopback/linklocal/multicast */
+        if (IN6_IS_ADDR_UNSPECIFIED(&a6)) {
+            DLOG("IP validation: %s -> FILTER (:: unspecified)", ip_str);
+            return 1;
+        }
+        if (IN6_IS_ADDR_LOOPBACK(&a6)) {
+            DLOG("IP validation: %s -> FILTER (::1 loopback)", ip_str);
+            return 1;
+        }
+        if (a6.s6_addr[0] == 0xFF) {
+            DLOG("IP validation: %s -> FILTER (ff00::/8 multicast)", ip_str);
+            return 1;
+        }
+        if (a6.s6_addr[0] == 0xFE && (a6.s6_addr[1] & 0xC0) == 0x80) {
+            DLOG("IP validation: %s -> FILTER (fe80::/10 link-local)", ip_str);
+            return 1;
+        }
+
+        if (cfg && cfg->block_private) {
+            if ((a6.s6_addr[0] & 0xFE) == 0xFC) {
+                DLOG("IP validation: %s -> FILTER (fc00::/7 ULA)", ip_str);
+                return 1;
+            }
+        }
+
+        if (cfg && cfg->block_testnet) {
+            if (a6.s6_addr[0] == 0x20 && a6.s6_addr[1] == 0x01 &&
+                a6.s6_addr[2] == 0x0D && a6.s6_addr[3] == 0xB8) {
+                DLOG("IP validation: %s -> FILTER (2001:db8::/32 documentation)", ip_str);
+                return 1;
+            }
+        }
+
+        DLOG("IP validation: %s -> ALLOW (public/routable)", ip_str);
+        return 0;
+    }
+
+    /* 不是IP字面量：对“服务器返回的IP”来说应当视为无效 */
+    DLOG("IP validation: '%s' -> FILTER (not an IP address)", s);
+    return 1;
+}
+
+// 检查DNS响应中是否包含无效IP地址
+static int dns_response_has_invalid_ips(const uint8_t *response, size_t response_len) {
+    if (!response || response_len < DNS_HEADER_LENGTH) {
+        return 0;
+    }
+
+    ares_dns_record_t *dnsrec = NULL;
+    ares_status_t status = ares_dns_parse(response, response_len, 0, &dnsrec);
+    if (status != ARES_SUCCESS) {
+        DLOG("Failed to parse DNS response for IP validation: %s", ares_strerror((int)status));
+        return 0;
+    }
+
+    const uint16_t tx_id = ares_dns_record_get_id(dnsrec);
+    int has_invalid = 0;
+    int a_record_count = 0;
+    int aaaa_record_count = 0;
+
+    // 配置过滤选项（可以将来从命令行配置）
+    ip_filter_cfg_t cfg = {
+        .block_private = 1,   // 过滤私有地址
+        .block_cgnat = 1,     // 过滤CGNAT
+        .block_testnet = 1    // 过滤测试网络
+    };
+
+    // 检查ANSWER section中的记录
+    size_t answer_count = ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER);
+    DLOG("%04hX: Total answer records: %zu", tx_id, answer_count);
+
+    for (size_t i = 0; i < answer_count; i++) {
+        const ares_dns_rr_t *rr = ares_dns_record_rr_get(dnsrec, ARES_SECTION_ANSWER, i);
+        ares_dns_rec_type_t type = ares_dns_rr_get_type(rr);
+        const char *rr_name = ares_dns_rr_get_name(rr);
+
+        // 获取该记录类型的所有keys
+        size_t keys_cnt = 0;
+        const ares_dns_rr_key_t *keys = ares_dns_rr_get_keys(type, &keys_cnt);
+
+        DLOG("%04hX: Record %zu - type: %d (%s), name: %s, keys: %zu",
+             tx_id, i, type, ares_dns_rec_type_tostr(type),
+             rr_name ? rr_name : "unknown", keys_cnt);
+
+        // 遍历所有keys，查找IP地址类型的数据
+        for (size_t k = 0; k < keys_cnt; k++) {
+            ares_dns_datatype_t datatype = ares_dns_rr_key_datatype(keys[k]);
+
+            if (datatype == ARES_DATATYPE_INADDR) {
+                a_record_count++;
+                const struct in_addr *addr = ares_dns_rr_get_addr(rr, keys[k]);
+                if (addr) {
+                    char ip_str[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, addr, ip_str, sizeof(ip_str));
+                    DLOG("%04hX: Found IPv4 address: %s (key: %s)",
+                         tx_id, ip_str, ares_dns_rr_key_tostr(keys[k]));
+
+                    if (should_filter_dns_ip(ip_str, &cfg)) {
+                        DLOG("%04hX: Found invalid IPv4 address: %s", tx_id, ip_str);
+                        has_invalid = 1;
+                        goto cleanup;  // 找到无效IP，直接退出
+                    }
+                }
+            }
+            else if (datatype == ARES_DATATYPE_INADDR6) {
+                aaaa_record_count++;
+                const struct ares_in6_addr *addr6 = ares_dns_rr_get_addr6(rr, keys[k]);
+                if (addr6) {
+                    char ip_str[INET6_ADDRSTRLEN];
+                    inet_ntop(AF_INET6, addr6, ip_str, sizeof(ip_str));
+                    DLOG("%04hX: Found IPv6 address: %s (key: %s)",
+                         tx_id, ip_str, ares_dns_rr_key_tostr(keys[k]));
+
+                    if (should_filter_dns_ip(ip_str, &cfg)) {
+                        DLOG("%04hX: Found invalid IPv6 address: %s", tx_id, ip_str);
+                        has_invalid = 1;
+                        goto cleanup;
+                    }
+                }
+            }
+        }
+    }
+
+cleanup:
+    DLOG("%04hX: Summary - A records: %d, AAAA records: %d, has_invalid: %d",
+         tx_id, a_record_count, aaaa_record_count, has_invalid);
+
+    ares_dns_record_destroy(dnsrec);
+    return has_invalid;
+}
 
 static void https_fetch_ctx_cleanup(https_client_t *client,
                                     struct https_fetch_ctx *prev,
@@ -479,6 +719,46 @@ static int https_fetch_ctx_process_response(https_client_t *client,
       WLOG_REQ("Invalid response Content-Type: %s", str_resp ? str_resp : "UNSET");
       faulty_response = 1;
     }
+
+    // 检查DNS响应内容
+    if (ctx->buf && ctx->buflen > 0) {
+      ares_dns_record_t *dnsrec = NULL;
+      ares_status_t status = ares_dns_parse((const uint8_t*)ctx->buf, ctx->buflen, 0, &dnsrec);
+
+      if (status == ARES_SUCCESS) {
+        uint16_t rcode = ares_dns_record_get_rcode(dnsrec);
+        size_t answer_count = ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER);
+        const uint16_t tx_id = ares_dns_record_get_id(dnsrec);
+
+        DLOG_REQ("DNS response - rcode: %d, answer_count: %zu", rcode, answer_count);
+
+        // 判断是否需要回退的条件：
+        // 1. 如果有ANSWER记录，检查IP有效性
+        // 2. 如果没有ANSWER记录（包括NXDOMAIN），根据配置决定是否回退
+        // 这里我们实现：任何非成功rcode或没有ANSWER记录都触发回退
+
+        if (rcode != ARES_RCODE_NOERROR) {
+          DLOG_REQ("RCODE=%d not NOERROR, triggering fallback", rcode);
+          faulty_response = 1;
+        }
+        else if (answer_count == 0) {
+          DLOG_REQ("No answer records (rcode=%d), triggering fallback", rcode);
+          faulty_response = 1;
+        }
+        else {
+          // 有ANSWER记录，检查IP有效性
+          if (dns_response_has_invalid_ips((uint8_t*)ctx->buf, ctx->buflen)) {
+              ELOG_REQ("Response contains invalid IP addresses, treating as faulty");
+              faulty_response = 1;
+          }
+        }
+
+        ares_dns_record_destroy(dnsrec);
+      } else {
+        DLOG_REQ("Failed to parse DNS response, triggering fallback");
+        faulty_response = 1;
+      }
+    }
   }
 
   if (logging_debug_enabled() || faulty_response || ctx->buflen == 0) {
@@ -583,12 +863,12 @@ static void https_fetch_ctx_cleanup(https_client_t *client,
     FLOG_REQ("curl_multi_remove_handle error %d: %s", code, curl_multi_strerror(code));
   }
   int drop_reply = 0;
-  int faulty_response = 0;
+
   if (curl_result_code < 0) {
     WLOG_REQ("Request was aborted");
     drop_reply = 1;
   } else if (https_fetch_ctx_process_response(client, ctx, (CURLcode)curl_result_code) != 0) {
-    ILOG_REQ("Response was faulty, skipping DNS reply");
+    ILOG_REQ("Response was faulty or not invalid ip, skipping DNS reply");
     drop_reply = 1;
   }
 
@@ -622,7 +902,6 @@ static void https_fetch_ctx_cleanup(https_client_t *client,
                   memcpy(ctx->buf, fallback_response, fallback_len);
                   ctx->buflen = fallback_len;
                   drop_reply = 0;  // 取消丢弃标记
-                  faulty_response = 0;
 
                   DLOG_REQ("Fallback DNS result prepared, len=%zu", fallback_len);
               }
