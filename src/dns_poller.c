@@ -23,6 +23,21 @@ static struct ev_io * get_io_event(dns_poller_t *d, int sock) {
 
 static void sock_state_cb(void *data, int fd, int read, int write) {
   dns_poller_t *d = (dns_poller_t *)data;
+    // 添加socket信息打印
+  struct sockaddr_storage addr;
+  socklen_t addr_len = sizeof(addr);
+  if (getsockname(fd, (struct sockaddr*)&addr, &addr_len) == 0) {
+    char ip_str[INET6_ADDRSTRLEN];
+    uint16_t port = 0;
+
+    if (addr.ss_family == AF_INET) {
+      struct sockaddr_in *s = (struct sockaddr_in*)&addr;
+      inet_ntop(AF_INET, &s->sin_addr, ip_str, sizeof(ip_str));
+      port = ntohs(s->sin_port);
+      DLOG("Bootstrap DNS socket %d bound to %s:%u", fd, ip_str, port);
+    }
+  }
+
   // stop and release used event
   struct ev_io *io_event_ptr = get_io_event(d, fd);
   if (io_event_ptr) {
