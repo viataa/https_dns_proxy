@@ -2,11 +2,13 @@
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "logging.h"
 #include "options.h"
 
@@ -49,6 +51,7 @@ void options_init(struct Options *opt) {
   opt->ca_info = NULL;
   opt->fallback_dns = NULL;  // 新增：后备DNS初始化为NULL
   opt->flight_recorder_size = 0;
+  opt->alloc_fields = 0;
 }
 
 int parse_int(char * str) {
@@ -60,12 +63,22 @@ int parse_int(char * str) {
   return (int)value;
 }
 
+// Free strdup'd config value before overwriting with cmdline arg
+static void opt_override_str(const char **field, const char *new_val,
+                             uint32_t *alloc_flags, uint32_t flag) {
+  if (*alloc_flags & flag) {
+    free((void *)*field);
+    *alloc_flags &= ~flag;
+  }
+  *field = new_val;
+}
+
 enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char **argv) {
   int c = 0;
   while ((c = getopt(argc, argv, "a:c:p:T:du:g:b:i:4r:e:t:l:vxqm:L:s:S:C:B:F:f:yhV")) != -1) {
     switch (c) {
     case 'a': // listen_addr
-      opt->listen_addr = optarg;
+      opt_override_str(&opt->listen_addr, optarg, &opt->alloc_fields, ALLOC_LISTEN_ADDR);
       break;
     case 'c': // DSCP codepoint
       opt->dscp = parse_int(optarg);
@@ -80,13 +93,13 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       opt->daemonize = 1;
       break;
     case 'u': // user
-      opt->user = optarg;
+      opt_override_str(&opt->user, optarg, &opt->alloc_fields, ALLOC_USER);
       break;
     case 'g': // group
-      opt->group = optarg;
+      opt_override_str(&opt->group, optarg, &opt->alloc_fields, ALLOC_GROUP);
       break;
     case 'b': // bootstrap dns servers
-      opt->bootstrap_dns = optarg;
+      opt_override_str(&opt->bootstrap_dns, optarg, &opt->alloc_fields, ALLOC_BOOTSTRAP_DNS);
       break;
     case 'i': // bootstrap dns servers polling interval
       opt->bootstrap_dns_polling_interval = parse_int(optarg);
@@ -95,13 +108,13 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       opt->ipv4 = 1;
       break;
     case 'r': // resolver url prefix
-      opt->resolver_url = optarg;
+      opt_override_str(&opt->resolver_url, optarg, &opt->alloc_fields, ALLOC_RESOLVER_URL);
       break;
     case 't': // curl http proxy
-      opt->curl_proxy = optarg;
+      opt_override_str(&opt->curl_proxy, optarg, &opt->alloc_fields, ALLOC_CURL_PROXY);
       break;
     case 'l': // logfile
-      opt->logfile = optarg;
+      opt_override_str(&opt->logfile, optarg, &opt->alloc_fields, ALLOC_LOGFILE);
       break;
     case 'v': // verbose
       if (opt->loglevel) {
@@ -128,13 +141,13 @@ enum OptionsParseResult options_parse_args(struct Options *opt, int argc, char *
       opt->stats_interval = parse_int(optarg);
       break;
     case 'S': // source address
-      opt->source_addr = optarg;
+      opt_override_str(&opt->source_addr, optarg, &opt->alloc_fields, ALLOC_SOURCE_ADDR);
       break;
     case 'C': // CA info
-      opt->ca_info = optarg;
+      opt_override_str(&opt->ca_info, optarg, &opt->alloc_fields, ALLOC_CA_INFO);
       break;
     case 'B':
-      opt->fallback_dns = optarg;
+      opt_override_str(&opt->fallback_dns, optarg, &opt->alloc_fields, ALLOC_FALLBACK_DNS);
       break;
     case 'F': // Flight recorder size
       opt->flight_recorder_size = parse_int(optarg);
@@ -301,7 +314,7 @@ void options_show_usage(int __attribute__((unused)) argc, char **argv) {
          "                         in memory and dumping them on fatal error or on SIGUSR2 signal.\n"
          "                         (Default: %u, Disabled: 0, Min: 100, Max: 100000)\n",
          defaults.flight_recorder_size);
-  printf("-f config_file         Load configuration from file (command line arguments override)\n");
+  printf("  -f config_file         Load configuration from file (command line arguments override)\n");
   printf("  -V                     Print versions and exit.\n");
   printf("  -h                     Print help and exit.\n");
   options_cleanup(&defaults);
@@ -312,4 +325,16 @@ void options_cleanup(struct Options *opt) {
   if (!opt->use_syslog && opt->logfd != STDOUT_FILENO && opt->logfd > 0) {
     close(opt->logfd);
   }
+  // Free strings allocated by config_load via strdup
+  if (opt->alloc_fields & ALLOC_LISTEN_ADDR)   { free((void *)opt->listen_addr); }
+  if (opt->alloc_fields & ALLOC_USER)           { free((void *)opt->user); }
+  if (opt->alloc_fields & ALLOC_GROUP)          { free((void *)opt->group); }
+  if (opt->alloc_fields & ALLOC_BOOTSTRAP_DNS)  { free((void *)opt->bootstrap_dns); }
+  if (opt->alloc_fields & ALLOC_RESOLVER_URL)   { free((void *)opt->resolver_url); }
+  if (opt->alloc_fields & ALLOC_CURL_PROXY)     { free((void *)opt->curl_proxy); }
+  if (opt->alloc_fields & ALLOC_SOURCE_ADDR)    { free((void *)opt->source_addr); }
+  if (opt->alloc_fields & ALLOC_CA_INFO)        { free((void *)opt->ca_info); }
+  if (opt->alloc_fields & ALLOC_LOGFILE)        { free((void *)opt->logfile); }
+  if (opt->alloc_fields & ALLOC_FALLBACK_DNS)   { free((void *)opt->fallback_dns); }
+  opt->alloc_fields = 0;
 }

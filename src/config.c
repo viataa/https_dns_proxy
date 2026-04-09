@@ -12,23 +12,33 @@
 
 #define MAX_LINE_LENGTH 1024
 
+// Helper: free old strdup'd value before replacing
+static void config_set_str(const char **field, const char *value,
+                           uint32_t *alloc_flags, uint32_t flag) {
+    if (*alloc_flags & flag) {
+        free((void *)*field);
+    }
+    *field = strdup(value);
+    *alloc_flags |= flag;
+}
+
 // 去除字符串首尾空白
 static char *trim_whitespace(char *str) {
     char *end = NULL;
 
     // 跳过前导空白
-    while(isspace((unsigned char)*str)) { { str++;
-    }
+    while (isspace((unsigned char)*str)) {
+        str++;
     }
 
-    if(*str == 0) { { return str;
-    }
+    if (*str == 0) {
+        return str;
     }
 
     // 移除尾部空白
     end = str + strlen(str) - 1;
-    while(end > str && isspace((unsigned char)*end)) { { end--;
-    }
+    while (end > str && isspace((unsigned char)*end)) {
+        end--;
     }
 
     end[1] = '\0';
@@ -47,15 +57,15 @@ static int parse_key_value(char *line, char **key, char **value) {
 
     // 处理等号后面的内容，可能为空
     char *val_start = equals + 1;
-    while (isspace((unsigned char)*val_start)) { { val_start++;
-}
-}
+    while (isspace((unsigned char)*val_start)) {
+        val_start++;
+    }
     *value = val_start;  // 即使为空字符串也允许
 
     // 键不能为空
-    if (*key[0] == '\0') { { return 0;
-}
-}
+    if ((*key)[0] == '\0') {
+        return 0;
+    }
     return 1;  // 值可以为空
 }
 
@@ -100,8 +110,8 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
 
         // 移除末尾换行符
         char *p = strchr(line, '\n');
-        if (p) { { *p = '\0';
-        }
+        if (p) {
+            *p = '\0';
         }
 
         // 跳过空行和注释
@@ -122,7 +132,7 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
         // 映射配置项到命令行参数
         if (strcmp(key, "listen_addr") == 0) {
             if (value[0] != '\0') {
-                opt->listen_addr = strdup(value);
+                config_set_str(&opt->listen_addr, value, &opt->alloc_fields, ALLOC_LISTEN_ADDR);
             }
         }
         else if (strcmp(key, "listen_port") == 0) {
@@ -148,17 +158,17 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
         }
         else if (strcmp(key, "user") == 0) {
             if (value[0] != '\0') {
-                opt->user = strdup(value);
+                config_set_str(&opt->user, value, &opt->alloc_fields, ALLOC_USER);
             }
         }
         else if (strcmp(key, "group") == 0) {
             if (value[0] != '\0') {
-                opt->group = strdup(value);
+                config_set_str(&opt->group, value, &opt->alloc_fields, ALLOC_GROUP);
             }
         }
         else if (strcmp(key, "bootstrap_dns") == 0) {
             if (value[0] != '\0') {
-                opt->bootstrap_dns = strdup(value);
+                config_set_str(&opt->bootstrap_dns, value, &opt->alloc_fields, ALLOC_BOOTSTRAP_DNS);
             }
         }
         else if (strcmp(key, "polling_interval") == 0) {
@@ -184,23 +194,23 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
         }
         else if (strcmp(key, "resolver_url") == 0) {
             if (value[0] != '\0') {
-                opt->resolver_url = strdup(value);
+                config_set_str(&opt->resolver_url, value, &opt->alloc_fields, ALLOC_RESOLVER_URL);
             }
         }
         else if (strcmp(key, "proxy") == 0) {
             // 允许为空字符串，表示不使用代理
             if (value[0] != '\0') {
-                opt->curl_proxy = strdup(value);
+                config_set_str(&opt->curl_proxy, value, &opt->alloc_fields, ALLOC_CURL_PROXY);
             } else {
-                opt->curl_proxy = NULL;  // 显式设置为 NULL
+                opt->curl_proxy = NULL;
             }
         }
         else if (strcmp(key, "source_addr") == 0) {
             // 允许为空字符串，表示使用系统默认
             if (value[0] != '\0') {
-                opt->source_addr = strdup(value);
+                config_set_str(&opt->source_addr, value, &opt->alloc_fields, ALLOC_SOURCE_ADDR);
             } else {
-                opt->source_addr = NULL;  // 显式设置为 NULL
+                opt->source_addr = NULL;
             }
         }
         else if (strcmp(key, "http_version") == 0) {
@@ -236,14 +246,14 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
         }
         else if (strcmp(key, "ca_info") == 0) {
             if (value[0] != '\0') {
-                opt->ca_info = strdup(value);
+                config_set_str(&opt->ca_info, value, &opt->alloc_fields, ALLOC_CA_INFO);
             } else {
                 opt->ca_info = NULL;
             }
         }
         else if (strcmp(key, "logfile") == 0) {
             if (value[0] != '\0') {
-                opt->logfile = strdup(value);
+                config_set_str(&opt->logfile, value, &opt->alloc_fields, ALLOC_LOGFILE);
             }
         }
         else if (strcmp(key, "loglevel") == 0) {
@@ -292,7 +302,7 @@ enum ConfigParseResult config_load(const char *config_file, struct Options *opt)
         }
         else if (strcmp(key, "fallback_dns") == 0) {
             if (value[0] != '\0') {
-                opt->fallback_dns = strdup(value);
+                config_set_str(&opt->fallback_dns, value, &opt->alloc_fields, ALLOC_FALLBACK_DNS);
             }
         }
         else {

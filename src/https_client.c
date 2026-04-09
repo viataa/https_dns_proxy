@@ -330,15 +330,16 @@ void https_client_set_fallback(const char *dns_servers) {
 
 static int query_fallback_dns(uint16_t id, const uint8_t *query, size_t query_len,
         uint8_t *response, size_t *response_len) {
-    if (!use_fallback) { { return -1;
-    }
+    if (!use_fallback) {
+        return -1;
     }
 
     char servers[256];
     strncpy(servers, fallback_dns_servers, sizeof(servers) - 1);
     servers[sizeof(servers) - 1] = '\0';
 
-    char *server = strtok(servers, ",");
+    char *saveptr = NULL;
+    char *server = strtok_r(servers, ",", &saveptr);
     while (server) {
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
@@ -350,27 +351,29 @@ static int query_fallback_dns(uint16_t id, const uint8_t *query, size_t query_le
 
             int sock = socket(AF_INET, SOCK_DGRAM, 0);
             if (sock < 0) {
-                server = strtok(NULL, ",");
+                server = strtok_r(NULL, ",", &saveptr);
                 continue;
             }
 
-            struct timeval tv = {2, 0};
+            struct timeval tv = {1, 0};
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
             ssize_t sent = sendto(sock, query, query_len, 0,
                     (struct sockaddr*)&addr, sizeof(addr));
             if (sent == (ssize_t)query_len) {
-                *response_len = recvfrom(sock, response, 512, 0, NULL, NULL);
+                ssize_t recv_len = recvfrom(sock, response, 512, 0, NULL, NULL);
                 close(sock);
 
-                if (*response_len > 0) {
+                if (recv_len > 0) {
+                    *response_len = (size_t)recv_len;
                     DLOG("%04hX: Fallback DNS success from %s", id, server);
                     return 0;
                 }
+            } else {
+                close(sock);
             }
-            close(sock);
         }
-        server = strtok(NULL, ",");
+        server = strtok_r(NULL, ",", &saveptr);
     }
 
     return -1;

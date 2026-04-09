@@ -32,7 +32,7 @@ static inline int severity_to_syslog(int severity) {
         case DOH_LOG_DEBUG:   return LOG_DEBUG;
         case DOH_LOG_INFO:    return LOG_INFO;
         case DOH_LOG_WARNING: return LOG_WARNING;
-        case DOH_LOG_ERROR:   return EV_ERROR;
+        case DOH_LOG_ERROR:   return LOG_ERR;
         case DOH_LOG_STATS:   return LOG_INFO;  // 统计信息作为info
         case DOH_LOG_FATAL:   return LOG_CRIT;
         default:          return LOG_INFO;

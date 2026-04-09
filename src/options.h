@@ -72,6 +72,10 @@ struct Options {
 
   // Number of logs to be kept by flight recorder
   int flight_recorder_size;
+
+  // Bitmask tracking which string fields were allocated via strdup
+  // (from config file loading). Bits defined in config.c.
+  uint32_t alloc_fields;
 } __attribute__((aligned(128)));
 typedef struct Options options_t;
 

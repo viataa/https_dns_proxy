@@ -335,10 +335,10 @@ int main(int argc, char *argv[]) {
         if (result == CPR_FILE_NOT_FOUND) {
             fprintf(stderr, "Config file '%s' not found\n", config_file);
             exit(1);
-        } else if (result == OPR_PARSING_ERROR) {
+        } else if (result == CPR_PARSE_ERROR) {
             fprintf(stderr, "Error parsing config file '%s'\n", config_file);
             exit(1);
-        } else if (result == OPR_SUCCESS) {
+        } else if (result == CPR_SUCCESS) {
             printf("Loaded configuration from '%s'\n", config_file);
         }
     }

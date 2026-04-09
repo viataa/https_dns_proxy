@@ -11,6 +11,18 @@ enum ConfigParseResult {
     CPR_MEMORY_ERROR    // 内存错误
 };
 
+// Bit flags for Options.alloc_fields to track strdup-allocated strings
+#define ALLOC_LISTEN_ADDR   (1u << 0)
+#define ALLOC_USER          (1u << 1)
+#define ALLOC_GROUP         (1u << 2)
+#define ALLOC_BOOTSTRAP_DNS (1u << 3)
+#define ALLOC_RESOLVER_URL  (1u << 4)
+#define ALLOC_CURL_PROXY    (1u << 5)
+#define ALLOC_SOURCE_ADDR   (1u << 6)
+#define ALLOC_CA_INFO       (1u << 7)
+#define ALLOC_LOGFILE       (1u << 8)
+#define ALLOC_FALLBACK_DNS  (1u << 9)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
